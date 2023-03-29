@@ -8,6 +8,7 @@
 *.dll
 *.so
 *.dylib
+mppwc
 
 # Test binary, built with `go test -c`
 *.test
@@ -23,4 +24,5 @@ go.work
 *.vtk
 
 .idea
+
 
