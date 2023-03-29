@@ -14,3 +14,5 @@ go build mppwc
 `
 go run main.go
 `
+
+### run tests
