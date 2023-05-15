@@ -120,7 +120,7 @@ func fi(i int, tau, u, v, Fx, Fy float64) float64 {
 
 func collideStream(c, tc, cT, tcT []float64) {
 	//var rho, ux, uy, temp float64
-	//var fstar, fstart float64[FT]{}
+	var fstar, fstart [F]float64
 
 	velMax := 0.0
 	tempMax := 0.0
@@ -157,20 +157,165 @@ func collideStream(c, tc, cT, tcT []float64) {
 				Rho[ARM(x, y)] = rho
 				Ux[ARM(x, y)] = ux
 				Uy[ARM(x, y)] = uy
-				if math.Sqrt(ux*ux+uy*uy) > VelMax {
-					velMax = math.Sqrt(ux*ux + uy*uy)
+				if math.Sqrt(ux*ux+uy*uy) > velMax {
+					VelMax = math.Sqrt(ux*ux + uy*uy)
 				} else {
-					velMax = VelMax
+					VelMax = velMax
 				}
-				if temp > TempMax {
-					tempMax = temp
+				if temp > tempMax {
+					TempMax = temp
 				} else {
-					tempMax = TempMax
+					TempMax = tempMax
 				}
 
 				// LES turbulence model
 				// compute non-equilibrium part of stress tensor PI
+				mxx := c[AR(x, y, _E)] - feq(_E, rho, ux, uy) + c[AR(x, y, _W)] - feq(_W, rho, ux, uy) + c[AR(x, y, _NE)] - feq(_NE, rho, ux, uy) + c[AR(x, y, _NW)] - feq(_NW, rho, ux, uy) + c[AR(x, y, _SE)] - feq(_SE, rho, ux, uy) + c[AR(x, y, _SW)] - feq(_E, rho, ux, uy)
+				myy := c[AR(x, y, _S)] - feq(_S, rho, ux, uy) + c[AR(x, y, _N)] - feq(_N, rho, ux, uy) + c[AR(x, y, _NE)] - feq(_NE, rho, ux, uy) + c[AR(x, y, _NW)] - feq(_NW, rho, ux, uy) + c[AR(x, y, _SE)] - feq(_SE, rho, ux, uy) + c[AR(x, y, _SW)] - feq(_E, rho, ux, uy)
+				mxy := c[AR(x, y, _NE)] - feq(_NE, rho, ux, uy) - (c[AR(x, y, _NW)] - feq(_NW, rho, ux, uy)) + c[AR(x, y, _SE)] - feq(_SE, rho, ux, uy) - (c[AR(x, y, _SW)] - feq(_SW, rho, ux, uy))
+				PI := math.Sqrt(2 * (mxx*mxx + 2*mxy*mxy + myy*myy))
+
+				// Smagorinsky LES
+				tauLes := 0.5 * (tau + math.Sqrt(tau*tau+2*CLes*CLes*PI/(csSq*csSq*rho)))
+				tautLes := 0.5 * (taut + math.Sqrt(taut*taut+2*CLes*CLes*PI/(csSqT*csSqT*rho)))
+
+				fc := c[AR(x, y, _C)]
+				fe := c[AR(x, y, _E)]
+				fn := c[AR(x, y, _N)]
+				fw := c[AR(x, y, _W)]
+				fs := c[AR(x, y, _S)]
+				fne := c[AR(x, y, _NE)]
+				fnw := c[AR(x, y, _NW)]
+				fsw := c[AR(x, y, _SW)]
+				fse := c[AR(x, y, _SE)]
+
+				k3 := 1. / 12. * (rho*(ux*ux+uy*uy) - fe - fn - fs - fw - 2.*(fse+fsw+fne+fnw-rho/3.))
+				k4 := .25 / tauLes * (fn + fs - fe - fw + rho*(ux*ux-uy*uy))
+				k5 := .25 / tauLes * (fne + fsw - fnw - fse - ux*uy*rho)
+
+				kxxyyAt := (6*k3 + 2*k4 - rho*ux*ux + fe + fw + fne + fnw + fse + fsw) *
+					(6*k3 - 2*k4 - rho*uy*uy + fn + fs + fne + fnw + fse + fsw)
+
+				k6 := -((fse+fsw-fne-fnw-2*ux*ux*uy*rho+uy*(rho-fn-fs-fc))*.25 + .5*ux*(fne-fnw-fse+fsw) - .5*uy*(-3*k3-k4) - 2*ux*k5)
+				k7 := -((fsw+fnw-fse-fne-2*uy*uy*ux*rho+ux*(rho-fw-fe-fc))*.25 + .5*uy*(fne+fsw-fse-fnw) - .5*ux*(-3*k3+k4) - 2*uy*k5)
+				k8 := .25*(kxxyyAt-fne-fnw-fse-fsw+
+					2*(ux*(fne-fnw+fse-fsw)+uy*(fne+fnw-fse-fsw))+
+					4*ux*uy*(fnw-fne+fse-fsw)-
+					ux*ux*(fn+fne+fnw+fs+fse+fsw)+
+					uy*uy*(3*ux*ux*rho-fe-fne-fnw-fse-fsw-fw)) -
+					2*k3 - 2*ux*k7 - 2*uy*k6 + 4*ux*uy*k5 +
+					(-1.5*k3+.5*k4)*ux*ux +
+					(-1.5*k3-.5*k4)*uy*uy
+
+				fstar[_C] = fc + 4*(-k3+k8) + fi(_C, tauLes, ux, uy, Fx, Fy)
+				fstar[_W] = fw - k3 - 2*k8 + k4 - 2*k7 + fi(_W, tauLes, ux, uy, Fx, Fy)
+				fstar[_E] = fe - k3 - 2*k8 + k4 + 2*k7 + fi(_E, tauLes, ux, uy, Fx, Fy)
+				fstar[_N] = fn - k3 - 2*k8 - k4 + 2*k6 + fi(_N, tauLes, ux, uy, Fx, Fy)
+				fstar[_S] = fs - k3 - 2*k8 - k4 - 2*k6 + fi(_S, tauLes, ux, uy, Fx, Fy)
+				fstar[_NW] = fnw + 2*k3 + k8 + k5 - k6 + k7 + fi(_NW, tauLes, ux, uy, Fx, Fy)
+				fstar[_NE] = fne + 2*k3 + k8 - k5 - k6 - k7 + fi(_NE, tauLes, ux, uy, Fx, Fy)
+				fstar[_SW] = fsw + 2*k3 + k8 - k5 + k6 + k7 + fi(_SW, tauLes, ux, uy, Fx, Fy)
+				fstar[_SE] = fse + 2*k3 + k8 + k5 + k6 - k7 + fi(_SE, tauLes, ux, uy, Fx, Fy)
+
+				for i := 0; i < FT; i++ {
+					fstart[i] = (1.-1./tautLes)*cT[ART(x, y, i)] + feqT(i, temp, ux, uy)/tautLes
+				}
+			} else {
+				// SOLID CELLS
+				// Bounce-back for NSE
+				fstar[_C] = c[AR(x, y, _C)]
+				fstar[_W] = c[AR(x, y, _E)]
+				fstar[_E] = c[AR(x, y, _W)]
+				fstar[_N] = c[AR(x, y, _S)]
+				fstar[_S] = c[AR(x, y, _N)]
+				fstar[_NW] = c[AR(x, y, _SE)]
+				fstar[_NE] = c[AR(x, y, _SW)]
+				fstar[_SW] = c[AR(x, y, _NE)]
+				fstar[_SE] = c[AR(x, y, _NW)]
+
+				temp := 0.0
+
+				for i := 0; i < FT; i++ {
+					temp += cT[ART(x, y, i)]
+				}
+
+				Temp[ARM(x, y)] = temp
+				switch ctype & 0x1c {
+				case 0:
+					for i := 0; i < FT; i++ {
+						fstart[i] = feqT(i, tempHotLB, 0, 0)
+					}
+					Temp[ARM(x, y)] = tempHotLB
+					break
+				case 4:
+					for i := 0; i < FT; i++ {
+						fstart[i] = feqT(i, tempColdLB, 0, 0)
+					}
+					Temp[ARM(x, y)] = tempColdLB
+					break
+				case 8:
+					fstart[_WT] = cT[ART(x, y, _ET)]
+					fstart[_ET] = cT[ART(x, y, _WT)]
+					fstart[_NT] = cT[ART(x, y, _ST)]
+					fstart[_ST] = cT[ART(x, y, _NT)]
+					break
+				case 16:
+					for i := 0; i < FT; i++ {
+						// fstart[i] = (1-1/tauts)*cT[ART(x,y,i)] + feqT(i, temp, 0, 0)/tauts;
+					}
+					break
+				}
 			}
+
+			// PERIODIC BC
+			var (
+				//xp := (x == LX - 1) ? 0 : x + 1;
+				//yp := (y == LY - 1) ? 0 : y + 1;
+				//xm := (x == 0) ? LX - 1 : x - 1;
+				//ym := (y == 0) ? LY - 1 : y - 1;
+				xp, yp, xm, ym int
+			)
+
+			if x == LX-1 {
+				xp = 0
+			} else {
+				xp = x + 1
+			}
+
+			if y == LY-1 {
+				yp = 0
+			} else {
+				yp = y + 1
+			}
+
+			if x == 0 {
+				xm = LX - 1
+			} else {
+				xm = x - 1
+			}
+
+			if y == 0 {
+				ym = LY - 1
+			} else {
+				ym = y - 1
+			}
+
+			// STREAMING
+			tc[AR(x, y, _C)] = fstar[_C]
+			tc[AR(x, yp, _N)] = fstar[_N]
+			tc[AR(x, ym, _S)] = fstar[_S]
+			tc[AR(xm, y, _W)] = fstar[_W]
+			tc[AR(xp, y, _E)] = fstar[_E]
+			tc[AR(xp, yp, _NE)] = fstar[_NE]
+			tc[AR(xp, ym, _SE)] = fstar[_SE]
+			tc[AR(xm, yp, _NW)] = fstar[_NW]
+			tc[AR(xm, ym, _SW)] = fstar[_SW]
+
+			tcT[ART(x, y, _CT)] = fstart[_CT]
+			tcT[ART(x, yp, _NT)] = fstart[_NT]
+			tcT[ART(x, ym, _ST)] = fstart[_ST]
+			tcT[ART(xm, y, _WT)] = fstart[_WT]
+			tcT[ART(xp, y, _ET)] = fstart[_ET]
 		}
 	}
 }
